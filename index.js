@@ -3,9 +3,10 @@ import express from "express";
 import Throttle from 'throttle';
 import Fs from 'fs';
 import { PassThrough } from 'stream';
+import path from "path"
 
 const app = express();
-let playlist = ["./audio1.mp3", "./audio2.mp3"]; // Lista de reproducción
+let playlist = [path.resolve("./audio1.mp3"), path.resolve("./audio2.mp3")]; // Lista de reproducción
 let currentTrackIndex = 0;
 let bitRate = 0;
 const streams = new Map();
