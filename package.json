@@ -4,7 +4,10 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "echo \"Error: no build specified\"",
+    "start": "node index.js",
+    "dev": "nodemon index.js"
   },
   "keywords": [],
   "author": "",
@@ -14,5 +17,8 @@
     "express": "^4.21.2",
     "music-metadata": "^10.6.5",
     "throttle": "^1.0.3"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9"
   }
 }

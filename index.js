@@ -134,3 +134,6 @@ const generateStream = () => {
 init()
     .then(() => app.listen(8080, () => console.log("Server running on http://localhost:8080")))
     .then(() => playFile(playlist[currentTrackIndex]));
+
+
+export default app;
