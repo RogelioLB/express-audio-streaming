@@ -1,140 +1,150 @@
-import { parseFile } from 'music-metadata';
+import { parseBlob } from 'music-metadata';
 import express from "express";
 import Throttle from 'throttle';
-import Fs from 'fs';
+import https from "https";
 import { PassThrough } from 'stream';
-import path from "path"
 
 const app = express();
-let playlist = [path.resolve("./audio1.mp3"), path.resolve("./audio2.mp3")]; // Lista de reproducción
-let currentTrackIndex = 0;
-let bitRate = 0;
-const streams = new Map();
-let isPaused = false; // Estado para controlar la pausa del audio
-let songReadable = null;
-let throttleTransformable = null;
-let trackDuration = 0; // Duración total de la pista actual en segundos
-let elapsedTime = 0; // Tiempo transcurrido en segundos
-let intervalId = null; // ID del intervalo para el contador
+const playlists = {
+    1: ["https://example.nyc3.cdn.digitaloceanspaces.com/audio1.mp3", "https://example.nyc3.cdn.digitaloceanspaces.com/audio2.mp3"],
+    2: ["https://example.nyc3.cdn.digitaloceanspaces.com/audio3.mp3", "https://example.nyc3.cdn.digitaloceanspaces.com/audio4.mp3"]
+};
+
+const playlistStates = new Map();
 
 app.use(express.static('public'));
 
-// Ruta para iniciar la transmisión
-app.get("/stream", (req, res) => {
-    const { id, stream } = generateStream(); // Creamos un nuevo stream para cada cliente
+// Ruta para acceder a una playlist específica
+app.get("/playlist/:id/stream", async (req, res) => {
+    const playlistId = parseInt(req.params.id, 10);
+    if (!playlists[playlistId]) {
+        res.status(404).send("Playlist no encontrada");
+        return;
+    }
+
+    const state = await getOrCreatePlaylistState(playlistId);
+    const { id, stream } = generateStream(state);
     res.setHeader("Content-Type", "audio/mpeg");
-    stream.pipe(res); // Enlazamos el stream del cliente con la respuesta
-    res.on('close', () => streams.delete(id));
-});
+    stream.pipe(res);
 
-// Ruta para pausar la transmisión
-app.post("/pause", (req, res) => {
-    isPaused = true;
-    if (songReadable) {
-        songReadable.pause(); // Pausa la lectura del archivo
-    }
-    if (throttleTransformable) {
-        throttleTransformable.pause(); // Pausa el flujo de datos
-    }
-    clearInterval(intervalId); // Detenemos el contador
-    res.send({ status: "paused", elapsedTime, remainingTime: trackDuration - elapsedTime });
-});
-
-// Ruta para reanudar la transmisión
-app.post("/resume", (req, res) => {
-    isPaused = false;
-    if (songReadable) {
-        songReadable.resume(); // Reanuda la lectura del archivo
-    }
-    if (throttleTransformable) {
-        throttleTransformable.resume(); // Reanuda el flujo de datos
-    }
-    startTimer(); // Reiniciamos el contador
-    res.send({ status: "resumed", elapsedTime, remainingTime: trackDuration - elapsedTime });
-});
-
-const init = async () => {
-    const fileInfo = await parseFile(playlist[currentTrackIndex]);
-    bitRate = fileInfo.format.bitrate / 8; // Convertimos el bitrate a bytes por segundo
-    trackDuration = Math.floor(fileInfo.format.duration); // Duración total de la pista en segundos
-    elapsedTime = 0; // Reiniciamos el tiempo transcurrido
-};
-
-const playFile = (filePath) => {
-    songReadable = Fs.createReadStream(filePath);
-    throttleTransformable = new Throttle(bitRate);
-
-    songReadable.pipe(throttleTransformable);
-    throttleTransformable.on('data', (chunk) => {
-        if (!isPaused) {
-            broadcastToEveryStreams(chunk); // Transmitimos datos solo si no está pausado
-        }
+    res.on('close', () => {
+        state.streams.delete(id);
     });
 
-    throttleTransformable.on('error', (e) => console.log(e));
+    if (!state.isPlaying) {
+        state.isPlaying = true;
+        playPlaylist(playlistId);
+    }
+});
 
-    songReadable.on('end', () => {
-        console.log("El archivo de audio ha terminado.");
-        clearInterval(intervalId); // Detenemos el contador al finalizar la pista
-        playNextTrack(); // Inicia la siguiente pista al terminar la actual
+const getOrCreatePlaylistState = async (playlistId) => {
+    if (!playlistStates.has(playlistId)) {
+        const state = await initPlaylist(playlistId);
+        playlistStates.set(playlistId, state);
+    }
+    return playlistStates.get(playlistId);
+};
+
+const initPlaylist = async (playlistId) => {
+    const playlist = playlists[playlistId];
+    const currentTrackIndex = 0;
+    const res = await fetch(playlist[currentTrackIndex]);
+    const blob = await res.blob();
+    const fileInfo = await parseBlob(blob);
+    console.log(`Duración de la pista: ${Math.floor(fileInfo.format.duration)} segundos`);
+    return {
+        currentTrackIndex: 0,
+        streams: new Map(),
+        isPaused: false,
+        trackDuration: Math.floor(fileInfo.format.duration),
+        elapsedTime: 0,
+        intervalId: null,
+        throttleTransformable: null,
+        isPlaying: false,
+        bitrate: Math.floor(fileInfo.format.bitrate / 8),
+        playlistId
+    };
+};
+
+const playPlaylist = async (playlistId) => {
+    const state = await getOrCreatePlaylistState(playlistId);
+    const playlist = playlists[playlistId];
+
+    https.get(playlist[state.currentTrackIndex], (res) => {
+        if (state.throttleTransformable) {
+            state.throttleTransformable.destroy(); // Eliminar cualquier transformación previa
+        }
+
+        state.throttleTransformable = new Throttle(state.bitrate);
+        res.pipe(state.throttleTransformable);
+
+        state.throttleTransformable.on('data', (chunk) => {
+            if (!state.isPaused) {
+                broadcastToPlaylistStreams(state, chunk); // Enviar datos a todos los streams
+            }
+        });
+
+        state.throttleTransformable.on('end', () => {
+            clearInterval(state.intervalId); // Asegura que el timer anterior termine
+            playNextTrack(playlistId); // Reproducir la siguiente canción
+        });
+
+        state.throttleTransformable.on('error', (err) => {
+            console.error(`Error en la transmisión: ${err.message}`);
+        });
+
+        startTimer(state); // Iniciar el temporizador para el progreso
+    }).on('error', (err) => {
+        console.error(`Error al obtener la pista: ${err.message}`);
+        playNextTrack(playlistId); // Pasar a la siguiente pista en caso de error
     });
-
-    startTimer(); // Iniciamos el contador
-    displayProgress(); // Mostrar progreso en consola
 };
 
-const playNextTrack = () => {
-    currentTrackIndex = (currentTrackIndex + 1) % playlist.length; // Avanza al siguiente archivo en la lista
-    init().then(() => playFile(playlist[currentTrackIndex]));
-};
+const playNextTrack = async (playlistId) => {
+    const state = await getOrCreatePlaylistState(playlistId);
+    const playlist = playlists[playlistId];
+    state.currentTrackIndex = (state.currentTrackIndex + 1) % playlist.length;
+    console.log(`Cambiando a la siguiente canción: ${playlist[state.currentTrackIndex]}`);
 
-const startTimer = () => {
-    clearInterval(intervalId); // Aseguramos que no haya múltiples intervalos activos
-    intervalId = setInterval(() => {
-        if (!isPaused) {
-            elapsedTime++;
-            if (elapsedTime >= trackDuration) {
-                clearInterval(intervalId); // Detenemos el contador cuando termina la pista
-            }
-        }
-    }, 1000); // Incrementamos el tiempo transcurrido cada segundo
-};
-
-const formatTime = (seconds) => {
-    const minutes = Math.floor(seconds / 60);
-    const remainingSeconds = seconds % 60;
-    return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
-};
-
-const displayProgress = () => {
-    clearInterval(intervalId); // Aseguramos que no haya múltiples intervalos activos
-    intervalId = setInterval(() => {
-        if (!isPaused) {
-            elapsedTime++;
-            console.log(`Tiempo transcurrido: ${formatTime(elapsedTime)} / ${formatTime(trackDuration)}`);
-            if (elapsedTime >= trackDuration) {
-                clearInterval(intervalId); // Detenemos el contador cuando termina la pista
-            }
-        }
-    }, 1000); // Actualizamos el progreso cada segundo
-};
-
-const broadcastToEveryStreams = (chunk) => {
-    for (let [id, stream] of streams) {
-        stream.write(chunk); // Escribimos el nuevo fragmento de datos en el stream del cliente
+    try {
+        const res = await fetch(playlist[state.currentTrackIndex]);
+        const blob = await res.blob();
+        const fileInfo = await parseBlob(blob);
+        state.trackDuration = Math.floor(fileInfo.format.duration);
+        state.elapsedTime = 0;
+        state.bitrate = Math.floor(fileInfo.format.bitrate / 8);
+        playPlaylist(playlistId);
+    } catch (err) {
+        console.error(`Error al inicializar la siguiente canción: ${err.message}`);
+        playNextTrack(playlistId); // Intentar la siguiente canción en caso de error
     }
 };
 
-const generateStream = () => {
+
+const broadcastToPlaylistStreams = (state, chunk) => {
+    for (let [id, stream] of state.streams) {
+        stream.write(chunk);
+    }
+};
+
+const startTimer = (state) => {
+    clearInterval(state.intervalId);
+    state.intervalId = setInterval(() => {
+        if (!state.isPaused) {
+            state.elapsedTime++;
+            console.log(`Tiempo transcurrido: ${state.elapsedTime}s / ${state.trackDuration}s`);
+            if (state.elapsedTime >= state.trackDuration) {
+                clearInterval(state.intervalId);
+            }
+        }
+    }, 1000);
+};
+
+const generateStream = (state) => {
     const id = Math.random().toString(36).slice(2);
     const stream = new PassThrough();
-    streams.set(id, stream);
+    state.streams.set(id, stream);
     return { id, stream };
 };
 
-init()
-    .then(() => app.listen(8080, () => console.log("Server running on http://localhost:8080")))
-    .then(() => playFile(playlist[currentTrackIndex]));
-
-
-export default app;
+app.listen(8080, () => console.log("Server running on http://localhost:8080"));
