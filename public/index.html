@@ -6,9 +6,6 @@
     <title>Document</title>
 </head>
 <body>
-    <audio controls autoplay>
-        <source src="/playlist/2/stream" type="audio/mpeg" onended="document.getElementsByTagName('audio')[0].play()">
-        Your browser does not support the audio element.
-        </audio>
+    <audio src="/playlist/2/stream" controls autoplay onended="document.getElementsByTagName('audio')[0].play()" />
 </body>
 </html>

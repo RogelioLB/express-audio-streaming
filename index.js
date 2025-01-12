@@ -7,7 +7,7 @@ import { PassThrough } from 'stream';
 const app = express();
 const playlists = {
     1: ["https://example.nyc3.cdn.digitaloceanspaces.com/audio1.mp3", "https://example.nyc3.cdn.digitaloceanspaces.com/audio2.mp3"],
-    2: ["https://example.nyc3.cdn.digitaloceanspaces.com/audio3.mp3", "https://example.nyc3.cdn.digitaloceanspaces.com/audio4.mp3"]
+    2: ["https://example.nyc3.cdn.digitaloceanspaces.com/Aunque%20s%C3%B3lo%20dure%2010%20segundos%20es%20lo%20m%C3%A1s%20cute%20que%20oir%C3%A1s.mp3", "https://example.nyc3.cdn.digitaloceanspaces.com/Stromae,%20Pomme%20-%20Ma%20Meilleure%20Ennemie%20(%20Espa%C3%B1ol%20)%20%20Arcane_%20Season%202.mp3"]
 };
 
 const playlistStates = new Map();
@@ -23,6 +23,8 @@ app.get("/playlist/:id/stream", async (req, res) => {
     }
 
     const state = await getOrCreatePlaylistState(playlistId);
+    console.log(`Nueva conexión a la playlist ${playlistId}`);
+    console.log(state)
     const { id, stream } = generateStream(state);
     res.setHeader("Content-Type", "audio/mpeg");
     stream.pipe(res);
@@ -34,6 +36,8 @@ app.get("/playlist/:id/stream", async (req, res) => {
     if (!state.isPlaying) {
         state.isPlaying = true;
         playPlaylist(playlistId);
+        console.log(`Reproduciendo la playlist ${playlistId}`);
+        console.log(state)
     }
 });
 
@@ -71,11 +75,10 @@ const playPlaylist = async (playlistId) => {
     const playlist = playlists[playlistId];
 
     https.get(playlist[state.currentTrackIndex], (res) => {
-        if (state.throttleTransformable) {
-            state.throttleTransformable.destroy(); // Eliminar cualquier transformación previa
-        }
-
         state.throttleTransformable = new Throttle(state.bitrate);
+        console.log(`Reproduciendo la pista: ${playlist[state.currentTrackIndex]}`);
+        console.log(state)
+
         res.pipe(state.throttleTransformable);
 
         state.throttleTransformable.on('data', (chunk) => {
@@ -102,6 +105,8 @@ const playPlaylist = async (playlistId) => {
 
 const playNextTrack = async (playlistId) => {
     const state = await getOrCreatePlaylistState(playlistId);
+    console.log(`Cambiando a la siguiente canción en la playlist ${playlistId}`);
+    console.log(state)
     const playlist = playlists[playlistId];
     state.currentTrackIndex = (state.currentTrackIndex + 1) % playlist.length;
     console.log(`Cambiando a la siguiente canción: ${playlist[state.currentTrackIndex]}`);
