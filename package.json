@@ -1,13 +1,12 @@
 {
   "name": "express-audio-stream",
   "version": "1.0.0",
-  "main": "index.js",
-  "type": "module",
+  "main": "index.ts",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "build": "echo \"Error: no build specified\"",
-    "start": "node index.js",
-    "dev": "nodemon index.js"
+    "start": "ts-node index.ts",
+    "dev": "nodemon --watch './**' --ext 'ts,json' --ignore 'src/**/*.spec.ts' --exec ts-node index.ts"
   },
   "keywords": [],
   "author": "",
@@ -15,10 +14,15 @@
   "description": "",
   "dependencies": {
     "express": "^4.21.2",
+    "ffmpeg-static": "^5.2.0",
     "music-metadata": "^10.6.5",
-    "throttle": "^1.0.3"
+    "throttle": "^1.0.3",
+    "ts-node": "^10.9.2"
   },
   "devDependencies": {
-    "nodemon": "^3.1.9"
+    "@types/express": "^5.0.0",
+    "@types/throttle": "^1.0.4",
+    "nodemon": "^3.1.9",
+    "typescript": "^5.7.3"
   }
 }
